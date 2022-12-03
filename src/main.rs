@@ -23,6 +23,13 @@ use core::str::FromStr;
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
+use sp_keyring::AccountKeyring;
+use subxt::{
+    tx::PairSigner,
+    OnlineClient,
+    PolkadotConfig,
+};
+
 #[derive(Debug, StructOpt)]
 pub struct Cli {
     #[structopt(long = "public-key", default_value = "0")]
@@ -73,26 +80,26 @@ impl EthereumListener{
 
     pub async fn run(&self, g_sender: Sender<(&'static str, Vec<u8>)>, secret_key: Arc<SecretKey>, auth_index: u32){
         // Initialize Transport
-        let web3 = web3::Web3::new(web3::transports::WebSocket::new("ws://localhost:8545").await.unwrap());
+        let web3 = web3::Web3::new(web3::transports::WebSocket::new("wss://sepolia.infura.io/v3/").await.unwrap());
         log::info!(target:"Ethereum", "Initialized Ethereum Transport successfully");
 
         // Fetch bytecode from the contract
-        let bytecode = include_str!("../SimpleEvent.bin");
+        // let bytecode = include_str!("../SimpleEvent.bin");
 
         // Ethereum accounts
         let accounts = web3.eth().accounts().await.unwrap();
         log::info!(target: "Ethereum","accounts: {:?}", &accounts);
 
         // Initialize Contract from Address
-        let contract = Contract::from_json(web3.eth(), ethereum_types::H160::from_str("0x4d470146215d085c75767b717dbb8d3b4468f893").unwrap(), include_bytes!("../SimpleEvent.abi")).unwrap();
+        let contract = Contract::from_json(web3.eth(), ethereum_types::H160::from_str("0x93dFaD43784B79ca6994D248475fFFa110c7897c").unwrap(), include_bytes!("../SimpleEvent.abi")).unwrap();
         log::info!(target: "Ethereum", "Initialized Contract from ABI and Address successfully");
 
-        // Filter for Hello event in our contract
+        // Filter for Deposit
         let filter = FilterBuilder::default()
             .address(vec![contract.address()])
             .topics(
                 Some(vec![hex!(
-                "d282f389399565f3671145f5916e51652b60eee8e5c759293a2f5771b8ddfd2e"
+                "141042e6aea445e632808db3dd85c0a99b490b961819715a045db9f1b478dba4"
             )
                     .into()]),
                 None,
@@ -131,13 +138,39 @@ impl SubstrateRunner{
         }
     }
 
-    pub async fn run(&self, mut receiver: Receiver<(Vec<u8>)>) {
+    pub async fn run(&self, mut receiver: Receiver<(Vec<u8>)>, flag: bool) {
+        // TODO: Maintain a key value store for cache
+        log::info!(target:"Substrate", "Initialized Substrate Runner");
         while let Some((bytes)) = receiver.recv().await {
-            #[cfg(aggregator)]
-            log::info!(target:"Substrate", "Received Majority event forwarding to Substrate from the following: {}", String::from_utf8(bytes).unwrap());
+            // if aggregator
+            if flag {
+                log::info!(target:"Substrate", "Received Majority Event");
+
+                let signer = PairSigner::new(AccountKeyring::Alice.pair());
+                // let dest = AccountKeyring::Bob.to_account_id().into();
+
+                // Create a client to use:
+                let api = OnlineClient::<PolkadotConfig>::new().await.unwrap();
+
+                // Create a transaction to submit:
+                let tx = substrate::tx()
+                    .template_module()
+                    .submit_unverified_signature();
+
+                // Submit the transaction with default params:
+                let hash = api.tx().sign_and_submit_default(&tx, &signer).await.unwrap();
+
+                let hash = format!("{}", hash);
+                log::info!(target:"Substrate", "extrinsic submitted: {}", hash);
+            }
+            // else do nothing
         }
     }
 }
+
+
+#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+pub mod substrate {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -148,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         boot_nodes,
         port,
         auth,
+        aggregator
     } = NetworkWorkerParams::from_args();
     env_logger::init();
     let (g_sender, g_receive) = channel(100);
@@ -192,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let substrate_runner = tokio::spawn(async move {
-        substrate.run(s_receive).await
+        substrate.run(s_receive, aggregator).await
     });
 
     if let Err(err) = tokio::try_join!(block_import_handler, block_fetcher_handler, substrate_runner) {

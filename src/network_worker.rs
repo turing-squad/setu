@@ -530,7 +530,6 @@ impl TheaNetwork {
                             if let Some((topic, data, flag)) = new_payload{
                                 if flag {
                                     // Forward to substrate runner
-                                    #[cfg(aggregator)]
                                     s_sender.send((data)).await.unwrap();
                                 } else {
                                     if let Err(e) = swarm.behaviour_mut().gossip_sub.publish(Sha256Topic::new(topic), data) {

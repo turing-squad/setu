@@ -1,5 +1,4 @@
 pub mod network_worker;
-pub mod sc_network;
 
 use blst::min_sig::*;
 use serde::{Deserialize, Serialize};
@@ -18,6 +17,8 @@ pub struct NetworkWorkerParams {
     pub port: u16,
     #[structopt(long = "auth", short = "i", default_value = "0")]
     pub auth: u32,
+    #[structopt(long = "agg", short = "a")]
+    pub aggregator: bool
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
