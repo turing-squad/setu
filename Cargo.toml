@@ -1,0 +1,39 @@
+[package]
+name = "libp2p-poc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libp2p = {version="0.49.0", features = ["full", "tcp-tokio", "dns-tokio"]}
+async-std = {version="1.12.0", features = ["attributes"]}
+blst = "0.3.10"
+rand = "0.7"
+rand_chacha = "0.2"
+serde = "1.0.147"
+bincode = "2.0.0-rc.2"
+serde_json = "1.0.87"
+structopt = { version = "0.3"}
+env_logger = "0.9.0"
+sc-network = { git = "https://github.com/paritytech/substrate.git", branch = "master" }
+sc-network-common = { git = "https://github.com/paritytech/substrate.git", branch = "master" }
+sc-network-gossip = { git = "https://github.com/paritytech/substrate.git", branch = "master" }
+sp-runtime = { git = "https://github.com/paritytech/substrate.git", branch = "master" }
+node-primitives = { git = "https://github.com/paritytech/substrate.git", branch = "master" }
+tokio = {version = "1.17.0", features = ["full"] }
+fnv = "1.0.7"
+futures = "0.3"
+log = "0.4"
+multiaddr = "0.16.0"
+anyhow = "1"
+async-trait = "0.1.58"
+portpicker = "0.1.1"
+web3 = "0.18.0"
+hex-literal = "0.3.4"
+ethabi = "16.0.0"
+ethereum-types = "0.12.1"
+
+[features]
+benchmark = []
+aggregator = []

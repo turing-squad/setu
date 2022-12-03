@@ -1,0 +1,20 @@
+FROM ubuntu:latest
+
+WORKDIR /usr/src/myapp
+COPY . .
+
+RUN apt-get update
+RUN apt-get install -y git && apt-get install -y curl
+RUN apt-get install -y protobuf-compiler
+
+RUN apt-get install -y build-essential && \
+    apt-get install -y clang && \
+    apt-get install -y jq && \
+    curl https://sh.rustup.rs -sSf | sh -s -- -y && \
+        export PATH="$PATH:$HOME/.cargo/bin" && \
+        rustup toolchain install nightly && \
+        cargo +nightly build --release --features bootnode-docker
+
+
+ENTRYPOINT $HOME/.cargo/bin +nightly run --release
+
