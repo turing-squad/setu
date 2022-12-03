@@ -1,5 +1,5 @@
 [package]
-name = "libp2p-poc"
+name = "setu"
 version = "0.1.0"
 edition = "2021"
 

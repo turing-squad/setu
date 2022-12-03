@@ -1,50 +1,3 @@
-// Copyright 2018 Parity Technologies (UK) Ltd.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS IN THE SOFTWARE.
-
-//! A basic chat application with logs demonstrating libp2p and the gossipsub protocol
-//! combined with mDNS for the discovery of peers to gossip with.
-//!
-//! Using two terminal windows, start two instances, typing the following in each:
-//!
-//! ```sh
-//! cargo run --example gossipsub-chat --features=full
-//! ```
-//!
-//! Mutual mDNS discovery may take a few seconds. When each peer does discover the other
-//! it will print a message like:
-//!
-//! ```sh
-//! mDNS discovered a new peer: {peerId}
-//! ```
-//!
-//! Type a message and hit return: the message is sent and printed in the other terminal.
-//! Close with Ctrl-c.
-//!
-//! You can open more terminal windows and add more peers using the same line above.
-//!
-//! Once an additional peer is mDNS discovered it can participate in the conversation
-//! and all peers will receive messages sent from it.
-//!
-//! If a participant exits (Control-C or otherwise) the other peers will receive an mDNS expired
-//! event and remove the expired peer from the list of known peers.
-
 use async_std::io;
 use blst::blst_keygen;
 use blst::blst_scalar;
@@ -156,7 +109,7 @@ impl EthereumListener{
             log::info!(target: "Ethereum", "Received Event: ({:#?}: 0x{})", decoded_event.params[0].name, decoded_event.params[0].value);
 
             let address = format!("0x{}", decoded_event.params[0].value);
-            let mut payload = Payload::create_payload_sync(secret_key.clone(), address.as_bytes(), auth_index as u8);
+            let mut payload = Payload::create_payload(secret_key.clone(), address.as_bytes(), auth_index as u8).await;
             payload.authority_index[auth_index as usize] = 1;
             let payload_bytes = serde_json::to_vec(&payload).unwrap();
             clone_g_sender
@@ -254,17 +207,19 @@ use libp2p::mdns::Mdns;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use setu::network_worker::TheaNetwork;
+use setu::NetworkWorkerParams;
 
-pub struct SignatureWrapper([u8; 96]);
 
-#[derive(Serialize, Deserialize, Clone)]
-struct Payload {
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Payload {
     signature_part_1: Vec<u8>,
     signature_part_2: Vec<u8>,
     signature_part_3: Vec<u8>,
     msg: Vec<u8>,
     authority_index: Vec<u8>,
 }
+
 impl Payload {
     pub async fn create_payload(sk: Arc<SecretKey>, msg: &[u8], auth_index: u8) -> Payload {
         let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
@@ -282,27 +237,7 @@ impl Payload {
             signature_part_2: sig_part_2.to_vec(),
             signature_part_3: sig_part_3.to_vec(),
             msg: msg.to_vec(),
-            authority_index: vec![0_u8; 10],
-        };
-        payload
-    }
-    pub fn create_payload_sync(sk: Arc<SecretKey>, msg: &[u8], auth_index: u8) -> Payload {
-        let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-        let sig = sk.sign(msg, dst, &[]);
-        let agg_sig = match AggregateSignature::aggregate(&[&sig], true) {
-            Ok(agg) => agg.to_signature(),
-            Err(err) => panic!("aggregate failure: {:?}", err),
-        };
-        let sig_bytes: [u8; 96] = agg_sig.serialize();
-        let sig_part_1: &[u8] = &sig_bytes[0..32];
-        let sig_part_2: &[u8] = &sig_bytes[32..64];
-        let sig_part_3: &[u8] = &sig_bytes[64..96];
-        let payload = Payload {
-            signature_part_1: sig_part_1.to_vec(),
-            signature_part_2: sig_part_2.to_vec(),
-            signature_part_3: sig_part_3.to_vec(),
-            msg: msg.to_vec(),
-            authority_index: vec![0_u8; 10],
+            authority_index: vec![0_u8; 1000],
         };
         payload
     }
@@ -330,88 +265,4 @@ impl Payload {
         };
         payload
     }
-}
-
-pub async fn create_aggregate_public_key_from_indexes(
-    authority_indexes: Vec<u8>,
-    public_key_map: HashMap<u32, PublicKey>,
-) -> AggregatePublicKey {
-    let mut agg_pk: Option<AggregatePublicKey> = None;
-    for x in 0..10 {
-        if authority_indexes[x as usize] == 1 {
-            // Fetch Public Key
-            let pk = public_key_map[&(x as u32)];
-            if agg_pk.is_none() {
-                agg_pk = match AggregatePublicKey::aggregate(&[&pk], false) {
-                    Ok(agg_sig) => Some(agg_sig),
-                    Err(err) => panic!("Unable to create Aggregate Public KEy"),
-                };
-            } else {
-                let mut new_agg_pk = agg_pk.unwrap();
-                new_agg_pk.add_public_key(&pk, false).unwrap();
-                agg_pk = Some(new_agg_pk);
-            }
-        }
-    }
-    agg_pk.unwrap()
-}
-// For Testing Purposes, We will check for 100%
-pub fn check_for_threshold(authority_index: Vec<u8>) -> bool {
-    let mut flag = false;
-    let mut counter = 0;
-    for x in authority_index {
-        if x == 1 {
-            counter += 1;
-        }
-    }
-    if counter > 5 {
-        flag = true;
-    }
-    flag
-}
-
-use libp2p_poc::network_worker::{TheaEventHandler, TheaNetwork};
-use libp2p_poc::sc_network::{start_gossip_validator, OurNetwork};
-use libp2p_poc::NetworkWorkerParams;
-use serde_json::Value;
-
-#[test]
-fn test_payload_serialization_and_deserialization() {
-    let mut ikm = [1u8; 32];
-    let sk_1 = SecretKey::key_gen(&ikm, &[]).unwrap();
-    let pk_1 = sk_1.sk_to_pk();
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    let msg = b"Faisal";
-    let sig = sk_1.sign(msg, dst, &[]);
-    let sig_bytes: [u8; 96] = sig.serialize();
-    let sig_part_1: &[u8] = &sig_bytes[0..32];
-    let sig_part_2: &[u8] = &sig_bytes[32..64];
-    let sig_part_3: &[u8] = &sig_bytes[64..96];
-    let payload = Payload {
-        signature_part_1: sig_part_1.to_vec(),
-        signature_part_2: sig_part_2.to_vec(),
-        signature_part_3: sig_part_3.to_vec(),
-        msg: msg.to_vec(),
-        authority_index: vec![0, 0, 0],
-    };
-    // Let's serialize
-    let serialized_payload: Vec<u8> = serde_json::to_vec(&payload).unwrap();
-
-    let deserialized_payload: Payload = serde_json::from_slice(&serialized_payload).unwrap();
-    assert_eq!(
-        deserialized_payload.signature_part_1,
-        payload.signature_part_1
-    );
-    // let deserialized_payload: Payload = serde_json::from_str(&serialized_payload).unwrap();
-
-    // Reconstruct the signature
-    let mut recon_signature = deserialized_payload.signature_part_1;
-    recon_signature.extend(deserialized_payload.signature_part_2);
-    recon_signature.extend(deserialized_payload.signature_part_3);
-    assert_eq!(recon_signature, sig_bytes.to_vec());
-
-    let recon_sig = Signature::from_bytes(&recon_signature).unwrap();
-    let err = recon_sig.verify(true, msg, dst, &[], &pk_1, true);
-    // panic!("{:#?}", err);
-    assert_eq!(1, 1);
 }
